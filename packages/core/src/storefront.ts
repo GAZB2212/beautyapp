@@ -67,7 +67,13 @@ export const storefrontSchema = z.object({
     }),
   ),
   staff: z.array(
-    z.object({ id: z.guid(), name: z.string(), bio: z.string().nullable(), avatar_path: z.string().nullable() }),
+    z.object({
+      id: z.guid(),
+      name: z.string(),
+      title: z.string().nullable(),
+      bio: z.string().nullable(),
+      avatar_path: z.string().nullable(),
+    }),
   ),
   gallery: z.array(z.object({ path: z.string(), caption: z.string().nullable() })),
 });

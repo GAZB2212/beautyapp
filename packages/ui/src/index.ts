@@ -4,3 +4,6 @@ export * from './theme';
 export * from './Text';
 export * from './Button';
 export * from './primitives';
+export * from './icons';
+export * from './form';
+export * from './rows';

@@ -1,0 +1,21 @@
+{
+  "name": "@salon/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@salon/config": "workspace:*",
+    "@types/node": "^22.19.0",
+    "typescript": "~6.0.3",
+    "vitest": "^4.1.0"
+  }
+}

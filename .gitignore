@@ -1,0 +1,18 @@
+node_modules/
+.turbo/
+dist/
+web-build/
+.expo/
+expo-env.d.ts
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+# generated native folders (CNG)
+apps/*/ios
+apps/*/android
+# supabase local
+supabase/.temp/
+supabase/.branches/

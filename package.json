@@ -1,0 +1,28 @@
+{
+  "name": "salon-app",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev:book": "pnpm --filter @salon/book start",
+    "dev:salon": "pnpm --filter @salon/salon start",
+    "web:book": "pnpm --filter @salon/book web",
+    "web:salon": "pnpm --filter @salon/salon web",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:types": "supabase gen types typescript --local > packages/db/src/types.ts",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2",
+    "supabase": "^3.1.0",
+    "turbo": "^2.11.11",
+    "typescript": "~6.0.3"
+  }
+}

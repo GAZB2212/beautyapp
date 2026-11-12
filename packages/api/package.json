@@ -5,8 +5,11 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "scripts": { "typecheck": "tsc --noEmit" },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
+    "@salon/core": "workspace:*",
     "@salon/db": "workspace:*",
     "@supabase/supabase-js": "^2.119.0"
   },

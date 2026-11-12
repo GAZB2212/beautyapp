@@ -240,7 +240,7 @@ plain Postgres; `supabase test db` against the full local stack).
 | 1 | Migrations 0001–0002: tables, access rules, public page and availability functions, tests | **Yes (security rules)** — approved |
 | 2 | Salon signup → create salon → onboarding wizard (name, slug, hours, first stylist, first service) | **Yes (auth)** |
 | 3 | Dashboard settings: services, staff & hours, branding, gallery, deposit/cancellation rules | — |
-| 4 | Public booking page: branded storefront, 3 layouts, service → stylist → slot → details, guest booking without payment, QR code | — |
+| 4 | Public booking page: branded storefront, 3 layouts, service → stylist → slot → details, guest booking without payment, QR code | — (storefront and booking flow UI built against sample data; live booking, other layouts and QR still to do) |
 | 5 | Stripe Connect onboarding + deposits + webhook + holds | **Yes (payments)** |
 | 6 | Diary: day/week per stylist, realtime, create/move/cancel, blocks, walk-ins, client list & notes | — |
 | 7 | Notifications: email + SMS confirmations, reminders, cancellation; staff push for new bookings | — |

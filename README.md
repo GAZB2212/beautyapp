@@ -25,9 +25,12 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the plan and data model, an
 pnpm install
 cp .env.example apps/book/.env && cp .env.example apps/salon/.env
 pnpm db:start          # local Supabase (needs Docker); prints the anon key for .env
-pnpm web:book          # booking page on http://localhost:8081
+pnpm web:book          # booking page on http://localhost:8081 (try /sarahs-hair)
 pnpm web:salon         # dashboard
 ```
+
+With no Supabase keys in `.env`, the booking page runs in preview mode on built-in sample data
+and never creates a real booking.
 
 Checks: `pnpm typecheck`, `pnpm lint`, `pnpm test`. Web builds: `pnpm --filter @salon/book build`.
 

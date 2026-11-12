@@ -4,7 +4,7 @@ Audience: salon clients, mostly women, arriving on a phone from Instagram, Googl
 and the salon owners who want a page they are proud to share. The product must look like it
 belongs to a high-end salon, never like booking software.
 
-Previews: [palettes](design/storefront-palettes.png) ·
+Previews: [booking flow](design/booking-flow.png) · [palettes](design/storefront-palettes.png) ·
 [full phone page](design/storefront-phone-full.png) · [desktop](design/storefront-desktop.png)
 
 ## Principles

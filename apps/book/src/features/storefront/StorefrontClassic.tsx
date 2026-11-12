@@ -1,9 +1,10 @@
-import { Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Button, Chip, Container, Divider, Monogram, SectionHeading, Text, useTheme } from '@salon/ui';
+import { formatDuration, type Storefront } from '@salon/core';
+import { Button, Chip, Container, Divider, Monogram, OptionRow, SectionHeading, Text, useTheme } from '@salon/ui';
+import { mediaUrl } from '@/lib/data';
+import { formatPrice, groupServices, hoursByDay } from '@/features/salon/present';
 import { Cover } from './Cover';
-import { formatDuration, formatPrice } from './format';
-import type { Storefront, StorefrontService } from './types';
 
 type Props = { salon: Storefront; onBook: (serviceId?: string) => void };
 
@@ -12,90 +13,113 @@ export function StorefrontClassic({ salon, onBook }: Props) {
   const { colors } = useTheme();
   const { width } = useWindowDimensions();
   const wide = width >= 720;
+  const { salon: s, branding: b } = salon;
+  const address = [s.address_line1, s.address_line2, [s.city, s.postcode].filter(Boolean).join(' ')].filter(Boolean).join(', ');
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <ScrollView contentContainerStyle={{ paddingBottom: 48 }}>
-        <Cover name={salon.name} coverUrl={salon.branding.coverUrl} height={wide ? 340 : 230} />
+        <Cover name={s.name} coverUrl={mediaUrl(b.cover_path)} height={wide ? 340 : 230} />
 
         {/* Identity */}
         <Container style={{ alignItems: 'center', marginTop: wide ? 8 : 4, gap: 14 }}>
-          {salon.city ? (
+          {s.city ? (
             <Text variant="label" tone="muted">
-              {salon.city}
+              {s.city}
             </Text>
           ) : null}
           <Text variant="display" center accessibilityRole="header" style={wide ? { fontSize: 68, lineHeight: 72 } : undefined}>
-            {salon.name}
+            {s.name}
           </Text>
-          {salon.tagline ? (
+          {b.tagline ? (
             <Text variant="heading" italic center tone="muted" style={{ fontSize: 21, lineHeight: 27, maxWidth: 420 }}>
-              {salon.tagline}
+              {b.tagline}
             </Text>
           ) : null}
           <Divider short style={{ marginVertical: 8 }} />
-          {salon.about ? (
+          {b.about ? (
             <Text center tone="muted" style={{ maxWidth: 520 }}>
-              {salon.about}
+              {b.about}
             </Text>
           ) : null}
-          {wide ? <Button title="Book an appointment" size="lg" onPress={() => onBook()} style={{ alignSelf: 'center', marginTop: 12 }} /> : null}
+          {wide ? (
+            <Button title="Book an appointment" size="lg" onPress={() => onBook()} style={{ alignSelf: 'center', marginTop: 12 }} />
+          ) : null}
         </Container>
 
         {/* Services */}
         <Container style={{ marginTop: 64 }}>
           <SectionHeading eyebrow="Services" title="The menu" />
-          {salon.categories.map((cat) => (
-            <View key={cat.name} style={{ marginBottom: 28 }}>
+          {groupServices(salon).map((group) => (
+            <View key={group.name} style={{ marginBottom: 28 }}>
               <View style={styles.category}>
-                <Text variant="label">{cat.name}</Text>
+                <Text variant="label">{group.name}</Text>
                 <View style={{ flex: 1, height: 1, backgroundColor: colors.accent, opacity: 0.6 }} />
               </View>
-              {cat.services.map((s, i) => (
-                <ServiceRow key={s.id} service={s} first={i === 0} onPress={() => onBook(s.id)} />
+              {group.services.map((v, i) => (
+                <OptionRow
+                  key={v.id}
+                  first={i === 0}
+                  title={v.name}
+                  subtitle={v.description}
+                  meta={<Chip label={formatDuration(v.duration_min)} />}
+                  trailing={formatPrice(v.price_pence, s.currency, v.price_is_from)}
+                  accessibilityLabel={`Book ${v.name}, ${formatDuration(v.duration_min)}, ${formatPrice(v.price_pence, s.currency, v.price_is_from)}`}
+                  onPress={() => onBook(v.id)}
+                />
               ))}
             </View>
           ))}
         </Container>
 
         {/* Team */}
-        <View style={{ backgroundColor: colors.surface, paddingVertical: 56, marginTop: 28 }}>
-          <Container>
-            <SectionHeading eyebrow="The team" title="Your stylists" />
-            <View style={styles.team}>
-              {salon.team.map((m) => (
-                <View key={m.id} style={styles.member}>
-                  <Monogram name={m.name} size={84} />
-                  <Text variant="subheading" center style={{ marginTop: 12 }}>
-                    {m.name}
-                  </Text>
-                  {m.role ? (
-                    <Text variant="small" center>
-                      {m.role}
+        {salon.staff.length > 0 ? (
+          <View style={{ backgroundColor: colors.surface, paddingVertical: 56, marginTop: 28 }}>
+            <Container>
+              <SectionHeading eyebrow="The team" title={salon.staff.length === 1 ? 'Your stylist' : 'Your stylists'} />
+              <View style={styles.team}>
+                {salon.staff.map((m) => (
+                  <View key={m.id} style={styles.member}>
+                    <Monogram name={m.name} size={84} />
+                    <Text variant="subheading" center style={{ marginTop: 12 }}>
+                      {m.name}
                     </Text>
-                  ) : null}
-                </View>
-              ))}
-            </View>
-          </Container>
-        </View>
+                    {m.title ? (
+                      <Text variant="small" center>
+                        {m.title}
+                      </Text>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+            </Container>
+          </View>
+        ) : null}
 
         {/* Visit */}
         <Container style={{ marginTop: 56 }}>
           <SectionHeading eyebrow="Visit" title="Opening hours" />
           <View style={{ alignSelf: 'center', width: '100%', maxWidth: 360 }}>
-            {salon.hours.map((h) => (
+            {hoursByDay(salon).map((h) => (
               <View key={h.day} style={styles.hoursRow}>
-                <Text tone={h.open ? 'ink' : 'muted'}>{h.day}</Text>
-                <Text tone={h.open ? 'ink' : 'muted'}>{h.open ? `${h.open} – ${h.close}` : 'Closed'}</Text>
+                <Text tone={h.text ? 'ink' : 'muted'}>{h.day}</Text>
+                <Text tone={h.text ? 'ink' : 'muted'}>{h.text ?? 'Closed'}</Text>
               </View>
             ))}
           </View>
           <Divider style={{ marginVertical: 36 }} />
           <View style={{ alignItems: 'center', gap: 6 }}>
-            {salon.addressLine ? <Text center>{salon.addressLine}</Text> : null}
-            {salon.phone ? <Text center tone="muted">{salon.phone}</Text> : null}
-            {salon.instagram ? <Text center tone="muted">@{salon.instagram}</Text> : null}
+            {address ? <Text center>{address}</Text> : null}
+            {s.phone ? (
+              <Text center tone="muted">
+                {s.phone}
+              </Text>
+            ) : null}
+            {b.instagram ? (
+              <Text center tone="muted">
+                @{b.instagram.replace(/^@/, '')}
+              </Text>
+            ) : null}
           </View>
         </Container>
       </ScrollView>
@@ -110,37 +134,10 @@ export function StorefrontClassic({ salon, onBook }: Props) {
   );
 }
 
-function ServiceRow({ service, first, onPress }: { service: StorefrontService; first: boolean; onPress: () => void }) {
-  const { colors } = useTheme();
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`Book ${service.name}, ${formatDuration(service.durationMin)}, ${formatPrice(service.pricePence, service.priceIsFrom)}`}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.service,
-        { borderTopColor: colors.line, borderTopWidth: first ? 0 : StyleSheet.hairlineWidth * 2, opacity: pressed ? 0.6 : 1 },
-      ]}
-    >
-      <View style={{ flex: 1, gap: 6 }}>
-        <Text variant="subheading" style={{ fontSize: 17 }}>
-          {service.name}
-        </Text>
-        {service.description ? <Text variant="small">{service.description}</Text> : null}
-        <Chip label={formatDuration(service.durationMin)} />
-      </View>
-      <Text variant="subheading" style={{ fontSize: 17, marginLeft: 16 }}>
-        {formatPrice(service.pricePence, service.priceIsFrom)}
-      </Text>
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   category: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 2 },
   team: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', columnGap: 28, rowGap: 28 },
   member: { width: 150, alignItems: 'center' },
   hoursRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 7 },
-  service: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 18 },
   bar: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12, borderTopWidth: StyleSheet.hairlineWidth * 2 },
 });

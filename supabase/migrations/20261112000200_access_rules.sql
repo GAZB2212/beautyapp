@@ -21,6 +21,10 @@ revoke all on all sequences in schema public from anon, authenticated;
 alter default privileges in schema public revoke all on tables from anon, authenticated;
 alter default privileges in schema public revoke all on sequences from anon, authenticated;
 alter default privileges in schema public revoke all on functions from anon, authenticated;
+-- Postgres lets everyone execute a new function unless told otherwise, and that default can
+-- only be removed globally. From here on, a function is callable only by roles it is
+-- explicitly granted to (in any schema, for objects created by the migration role).
+alter default privileges revoke execute on functions from public;
 
 -- Server-side code (Edge Functions) uses the service role, which bypasses RLS.
 grant usage on schema public to anon, authenticated, service_role;
@@ -74,9 +78,12 @@ end $$;
 create or replace function app.protect_last_owner()
 returns trigger language plpgsql security definer set search_path = '' as $$
 begin
-  if old.role = 'owner'
-     and (tg_op = 'DELETE' or new.role <> 'owner' or new.user_id is distinct from old.user_id)
-     and exists (select 1 from public.salons s where s.id = old.salon_id)   -- not a salon being deleted
+  if old.role <> 'owner' or (tg_op = 'UPDATE' and new.role = 'owner' and new.user_id is not distinct from old.user_id) then
+    return coalesce(new, old);
+  end if;
+  -- Serialise owner changes per salon, so two owners cannot remove each other at the same moment.
+  perform 1 from public.salons s where s.id = old.salon_id for update;
+  if found   -- (not found = the salon itself is being deleted)
      and not exists (
        select 1 from public.salon_members m
        where m.salon_id = old.salon_id and m.role = 'owner' and m.user_id is not null and m.id <> old.id
@@ -88,6 +95,39 @@ begin
 end $$;
 create trigger protect_last_owner before update or delete on public.salon_members
   for each row execute function app.protect_last_owner();
+
+-- A per-service deposit is a deposit rule, so only an owner may set it.
+create or replace function app.guard_service_deposit()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  if (select auth.uid()) is not null
+     and new.deposit_override_pence is distinct from (case when tg_op = 'UPDATE' then old.deposit_override_pence end)
+     and new.salon_id not in (select app.salon_ids('owner'))
+  then
+    raise exception 'only an owner can change deposit rules' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+create trigger guard_service_deposit before insert or update on public.services
+  for each row execute function app.guard_service_deposit();
+
+-- What a signed-in team member may do to a booking's state. (Server code is not restricted.)
+create or replace function app.guard_booking_update()
+returns trigger language plpgsql set search_path = '' as $$
+begin
+  if (select auth.uid()) is null then
+    return new;
+  end if;
+  if old.status = 'pending_payment' then
+    raise exception 'a booking awaiting payment cannot be edited' using errcode = '42501';
+  end if;
+  if new.cancelled_by is distinct from old.cancelled_by and new.cancelled_by is distinct from 'salon' then
+    raise exception 'a cancellation made in the dashboard is recorded as made by the salon' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+create trigger guard_booking_update before update on public.bookings
+  for each row execute function app.guard_booking_update();
 
 -- ---------------------------------------------------------------------------
 -- 4. Grants and policies, table by table
@@ -148,13 +188,36 @@ create policy "managers edit branding" on public.salon_branding
   with check (salon_id in (select app.salon_ids('manager')));
 
 -- Tables managers maintain: hours, gallery, staff, staff hours, services ------
-grant select, insert, update, delete on
-  public.salon_hours, public.salon_gallery_images, public.staff_hours,
+-- Writes are column-by-column, so ids and timestamps can never be set from the API.
+grant select, delete on
+  public.salon_hours, public.salon_gallery_images, public.staff, public.staff_hours,
   public.service_categories, public.services, public.staff_services
   to authenticated;
-grant select, delete on public.staff to authenticated;
-grant insert (salon_id, name, bio, avatar_path, colour, is_bookable, active, sort_order) on public.staff to authenticated;
-grant update (name, bio, avatar_path, colour, is_bookable, active, sort_order) on public.staff to authenticated;   -- not user_id
+
+grant insert (salon_id, weekday, opens_at, closes_at) on public.salon_hours to authenticated;
+grant update (weekday, opens_at, closes_at) on public.salon_hours to authenticated;
+
+grant insert (salon_id, storage_path, caption, sort_order) on public.salon_gallery_images to authenticated;
+grant update (caption, sort_order) on public.salon_gallery_images to authenticated;
+
+grant insert (salon_id, name, title, bio, avatar_path, colour, is_bookable, active, sort_order) on public.staff to authenticated;
+grant update (name, title, bio, avatar_path, colour, is_bookable, active, sort_order) on public.staff to authenticated;   -- not user_id
+
+grant insert (salon_id, staff_id, weekday, starts_at, ends_at) on public.staff_hours to authenticated;
+grant update (weekday, starts_at, ends_at) on public.staff_hours to authenticated;
+
+grant insert (salon_id, name, sort_order) on public.service_categories to authenticated;
+grant update (name, sort_order) on public.service_categories to authenticated;
+
+grant insert (salon_id, category_id, name, description, duration_min, buffer_after_min, price_pence, price_is_from,
+              image_path, deposit_override_pence, online_bookable, active, sort_order)
+  on public.services to authenticated;
+grant update (category_id, name, description, duration_min, buffer_after_min, price_pence, price_is_from,
+              image_path, deposit_override_pence, online_bookable, active, sort_order)   -- deposit: owners only, see trigger
+  on public.services to authenticated;
+
+grant insert (salon_id, staff_id, service_id, price_override_pence, duration_override_min) on public.staff_services to authenticated;
+grant update (price_override_pence, duration_override_min) on public.staff_services to authenticated;
 
 do $$
 declare t text;
@@ -195,23 +258,24 @@ create policy "members edit" on public.blocks
 create policy "members remove" on public.blocks
   for delete to authenticated using (salon_id in (select app.salon_ids('staff')));
 
--- clients: any member reads/creates/edits; managers delete --------------------
-grant select, delete on public.clients to authenticated;
+-- clients: any member reads/creates/edits. Deleting a client (and their saved card and
+-- payment history) is a server-side owner action, added with the client-data tools.
+grant select on public.clients to authenticated;
 grant insert (salon_id, first_name, last_name, email, phone, notes, marketing_opt_in, source) on public.clients to authenticated;
 grant update (first_name, last_name, email, phone, notes, marketing_opt_in) on public.clients to authenticated;
 create policy "members read" on public.clients
   for select to authenticated using (salon_id in (select app.salon_ids('staff')));
 create policy "members add" on public.clients
-  for insert to authenticated with check (salon_id in (select app.salon_ids('staff')));
+  for insert to authenticated
+  with check (salon_id in (select app.salon_ids('staff')) and source in ('dashboard', 'walk_in'));
 create policy "members edit" on public.clients
   for update to authenticated
   using (salon_id in (select app.salon_ids('staff')))
   with check (salon_id in (select app.salon_ids('staff')));
-create policy "managers remove" on public.clients
-  for delete to authenticated using (salon_id in (select app.salon_ids('manager')));
 
 -- bookings: any member reads, creates dashboard/walk-in bookings, moves, cancels.
--- Never deleted (cancel instead). Deposit, token and hold fields are server-only.
+-- Never deleted (cancel instead). Deposit and hold fields are server-only, and a booking
+-- that is still awaiting payment cannot be edited (see app.guard_booking_update).
 grant select on public.bookings to authenticated;
 grant insert (salon_id, client_id, staff_id, starts_at, ends_at, buffer_after_min, status, source,
               total_pence, client_note, internal_note)
@@ -234,7 +298,11 @@ create policy "members edit" on public.bookings
   with check (salon_id in (select app.salon_ids('staff')) and status <> 'pending_payment');
 
 -- booking_items ---------------------------------------------------------------
-grant select, insert, update, delete on public.booking_items to authenticated;
+grant select, delete on public.booking_items to authenticated;
+grant insert (salon_id, booking_id, service_id, service_name, duration_min, price_pence, starts_at, ends_at, sort_order)
+  on public.booking_items to authenticated;
+grant update (service_id, service_name, duration_min, price_pence, starts_at, ends_at, sort_order)
+  on public.booking_items to authenticated;
 create policy "members read" on public.booking_items
   for select to authenticated using (salon_id in (select app.salon_ids('staff')));
 create policy "members add" on public.booking_items
@@ -271,7 +339,8 @@ create policy "own devices" on public.push_tokens
   using (user_id = (select auth.uid()))
   with check (user_id = (select auth.uid()));
 
--- stripe_events, client_salons: no API access (server only / phase 2).
+-- No API access at all (server only): salon_stripe, client_stripe, booking_access,
+-- stripe_events. client_salons opens with the client app (phase 2).
 
 -- ---------------------------------------------------------------------------
 -- 5. What the public booking page can read
@@ -310,7 +379,10 @@ language sql stable security definer set search_path = '' as $$
       from public.salon_hours h where h.salon_id = s.id), '[]'::jsonb),
     'categories', coalesce((
       select jsonb_agg(jsonb_build_object('id', c.id, 'name', c.name) order by c.sort_order, c.name)
-      from public.service_categories c where c.salon_id = s.id), '[]'::jsonb),
+      from public.service_categories c
+      where c.salon_id = s.id
+        and exists (select 1 from public.services v
+                    where v.category_id = c.id and v.active and v.online_bookable)), '[]'::jsonb),
     'services', coalesce((
       select jsonb_agg(jsonb_build_object(
         'id', v.id, 'category_id', v.category_id, 'name', v.name, 'description', v.description,
@@ -324,7 +396,7 @@ language sql stable security definer set search_path = '' as $$
         order by v.sort_order, v.name)
       from public.services v where v.salon_id = s.id and v.active and v.online_bookable), '[]'::jsonb),
     'staff', coalesce((
-      select jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'bio', f.bio, 'avatar_path', f.avatar_path)
+      select jsonb_agg(jsonb_build_object('id', f.id, 'name', f.name, 'title', f.title, 'bio', f.bio, 'avatar_path', f.avatar_path)
         order by f.sort_order, f.name)
       from public.staff f where f.salon_id = s.id and f.active and f.is_bookable), '[]'::jsonb),
     'gallery', coalesce((
@@ -338,8 +410,9 @@ $$;
 revoke all on function public.get_storefront(text) from public, anon, authenticated;
 grant execute on function public.get_storefront(text) to anon, authenticated, service_role;
 
--- Free appointment start times for a service. Returns times only: never who has booked,
--- or why a time is unavailable.
+-- Free appointment start times for a service, for up to 31 days at a time. Returns times
+-- only: never who has booked, or why a time is unavailable.
+-- A stylist's own working hours, where set, replace the salon's opening hours for them.
 create or replace function public.get_availability(
   p_slug text,
   p_service_id uuid,
@@ -348,10 +421,12 @@ create or replace function public.get_availability(
   p_staff_id uuid default null
 )
 returns table (staff_id uuid, starts_at timestamptz)
-language sql stable security definer set search_path = '' as $$
+language sql stable security definer set search_path = '' set jit = off as $$
   with salon as (
-    select s.id, s.timezone, st.slot_interval_min, st.min_notice_hours, st.max_advance_days,
-           (now() at time zone s.timezone)::date as today
+    select s.id, s.timezone, st.slot_interval_min, st.min_notice_hours,
+           greatest(coalesce(p_from, (now() at time zone s.timezone)::date), (now() at time zone s.timezone)::date) as first_day,
+           least(coalesce(p_from, (now() at time zone s.timezone)::date) + least(greatest(coalesce(p_days, 14), 1), 31) - 1,
+                 (now() at time zone s.timezone)::date + st.max_advance_days) as last_day
     from public.salons s
     join public.salon_settings st on st.salon_id = s.id
     where s.slug = lower(p_slug)
@@ -369,11 +444,7 @@ language sql stable security definer set search_path = '' as $$
   ),
   days as (
     select d::date as day
-    from salon,
-         generate_series(
-           greatest(p_from, salon.today)::timestamp,
-           least(p_from + least(greatest(p_days, 1), 31) - 1, salon.today + salon.max_advance_days)::timestamp,
-           interval '1 day') d
+    from salon, generate_series(salon.first_day::timestamp, salon.last_day::timestamp, interval '1 day') d
   ),
   windows as (   -- the stylist's own hours if set, otherwise the salon's opening hours
     select e.staff_id, e.duration_min, e.buffer_after_min, d.day, w.open_t, w.close_t
@@ -391,32 +462,47 @@ language sql stable security definer set search_path = '' as $$
         and not exists (select 1 from public.staff_hours x where x.staff_id = e.staff_id)
     ) w
   ),
-  slots as (
-    select w.staff_id, w.duration_min, w.buffer_after_min,
-           ((w.day + w.open_t + make_interval(mins => m)) at time zone salon.timezone) as starts_at
+  slots as materialized (
+    select w.staff_id, c.starts_at,
+           c.starts_at + make_interval(mins => w.duration_min) as ends_at,
+           c.starts_at + make_interval(mins => w.duration_min + w.buffer_after_min) as busy_until
     from windows w
     cross join salon
     cross join lateral generate_series(
       0,
       (extract(epoch from (w.close_t - w.open_t)) / 60)::integer - w.duration_min,
       salon.slot_interval_min) m
+    cross join lateral (
+      select ((w.day + w.open_t + make_interval(mins => m)) at time zone salon.timezone) as starts_at
+    ) c
+  ),
+  busy as materialized (   -- live bookings in the window, each extended by its clean-down time
+    select b.staff_id, b.starts_at as busy_from,
+           b.ends_at + make_interval(mins => b.buffer_after_min) as busy_until
+    from public.bookings b
+    join salon on b.salon_id = salon.id
+    where b.starts_at >= (salon.first_day::timestamp at time zone salon.timezone) - interval '1 day'
+      and b.starts_at <  (salon.last_day::timestamp at time zone salon.timezone) + interval '2 days'
+      and (b.status = 'confirmed' or (b.status = 'pending_payment' and b.hold_expires_at > now()))
+  ),
+  blocked as materialized (   -- blocked-out time: a stylist's own, or salon-wide (staff_id is null)
+    select k.staff_id, k.starts_at, k.ends_at
+    from public.blocks k
+    join salon on k.salon_id = salon.id
+    where k.ends_at   >  (salon.first_day::timestamp at time zone salon.timezone)
+      and k.starts_at <  (salon.last_day::timestamp at time zone salon.timezone) + interval '2 days'
   )
-  select sl.staff_id, sl.starts_at
+  select distinct sl.staff_id, sl.starts_at
   from slots sl
   cross join salon
   where sl.starts_at >= now() + make_interval(hours => salon.min_notice_hours)
-    and not exists (   -- clashes with a live booking (including its clean-down time)
-      select 1 from public.bookings b
-      where b.staff_id = sl.staff_id
-        and (b.status = 'confirmed' or (b.status = 'pending_payment' and b.hold_expires_at > now()))
-        and b.starts_at < sl.starts_at + make_interval(mins => sl.duration_min + sl.buffer_after_min)
-        and b.ends_at + make_interval(mins => b.buffer_after_min) > sl.starts_at)
-    and not exists (   -- clashes with blocked time (stylist's own, or salon-wide)
-      select 1 from public.blocks k
-      where k.salon_id = salon.id
-        and (k.staff_id is null or k.staff_id = sl.staff_id)
-        and k.starts_at < sl.starts_at + make_interval(mins => sl.duration_min)
-        and k.ends_at > sl.starts_at)
+    and not exists (
+      select 1 from busy b
+      where b.staff_id = sl.staff_id and b.busy_from < sl.busy_until and b.busy_until > sl.starts_at)
+    and not exists (
+      select 1 from blocked k
+      where (k.staff_id is null or k.staff_id = sl.staff_id)
+        and k.starts_at < sl.ends_at and k.ends_at > sl.starts_at)
   order by sl.starts_at, sl.staff_id
 $$;
 revoke all on function public.get_availability(text, uuid, date, integer, uuid) from public, anon, authenticated;

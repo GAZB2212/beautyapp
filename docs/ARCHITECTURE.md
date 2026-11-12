@@ -88,13 +88,24 @@ wrapped in a thin Next.js shell without changing the data layer.
   deposits, Stripe IDs and salon status are not writable from the API), RLS policies keyed on
   `app.salon_ids(min_role)`, and composite `(salon_id, id)` foreign keys plus triggers so a row
   can never reference or move to another salon.
-- **New tables are closed by default**: default API privileges are revoked, so every future
-  table needs explicit grants and policies in its migration.
+- **Everything new is closed by default**: default API privileges are revoked for tables,
+  sequences and functions, so every future table or function needs explicit grants (and
+  policies) in its migration. Tests fail if a table lacks RLS or a function is callable by a
+  role that is not on the allow-list.
+- **Secrets live in server-only tables** (`salon_stripe`, `client_stripe`, `booking_access`,
+  `stripe_events`), so Stripe identifiers and manage-link tokens cannot appear in any API
+  response or realtime message.
+- **Not from the API**: deleting bookings (cancel instead), deleting clients (a server-side
+  owner action that also handles saved cards), changing slug/status/payment flags, creating
+  salons, or accepting invites. These go through reviewed server functions.
+- An independent adversarial review of the rules found no cross-salon read or write; its
+  in-salon findings are fixed and covered by tests.
 - **Double-booking prevention** is in the database: an exclusion constraint on
   `bookings (staff_id, during)` for live statuses, so two requests for the same slot cannot
   both succeed regardless of application code.
-- Realtime: `postgres_changes` on `bookings`/`blocks` filtered by `salon_id`; RLS applies, so
-  only members receive their salon's events.
+- Realtime (step 6): private per-salon broadcast channels fed by database triggers, rather
+  than publishing tables directly, because table-level change feeds do not filter delete
+  events by RLS. Nothing is published for realtime until then.
 
 ## 4. Payments
 
@@ -152,7 +163,8 @@ each salon has a `timezone`.
 ### Tenancy & access
 | Table | Key columns |
 |---|---|
-| `salons` | slug (unique, lowercase), name, status (onboarding/active/suspended), timezone, currency, address fields, phone, email, stripe_account_id, stripe_charges_enabled, stripe_customer_id, plan, trial_ends_at |
+| `salons` | slug (unique, lowercase), name, status (onboarding/active/suspended), timezone (validated), currency, address fields, phone, email, stripe_charges_enabled, stripe_details_submitted, trial_ends_at. Settings, branding and Stripe rows are created automatically with each salon. |
+| `salon_stripe` (server-only) | salon_id pk, stripe_account_id (Connect), stripe_customer_id (Billing) |
 | `salon_settings` | salon_id pk, deposit_type (none/fixed/percent), deposit_value, cancellation_window_hours, no_show_fee_type, no_show_fee_value, slot_interval_min, min_notice_hours, max_advance_days, reminder_hours int[] (default {24,2}), allow_staff_choice, require_phone |
 | `salon_hours` | salon_id, weekday (0–6), opens_at, closes_at, is_closed |
 | `salon_members` | salon_id, user_id, role (owner/manager/staff), staff_id?, invited_email, accepted_at; unique (salon_id,user_id) |
@@ -163,7 +175,7 @@ each salon has a `timezone`.
 ### Catalogue & staff
 | Table | Key columns |
 |---|---|
-| `staff` | salon_id, user_id?, name, bio, avatar_path, colour, is_bookable, sort_order, active |
+| `staff` | salon_id, user_id?, name, title, bio, avatar_path, colour, is_bookable, sort_order, active |
 | `staff_hours` | staff_id, weekday, starts_at, ends_at (recurring weekly; overrides salon_hours) |
 | `service_categories` | salon_id, name, sort_order |
 | `services` | salon_id, category_id?, name, description, duration_min, buffer_after_min, price_pence, price_is_from bool, image_path, deposit_override_pence?, online_bookable, active, sort_order |
@@ -173,8 +185,10 @@ each salon has a `timezone`.
 ### Clients & bookings
 | Table | Key columns |
 |---|---|
-| `clients` | salon_id, user_id?, first_name, last_name, email, phone (E.164), notes (salon-private), marketing_opt_in, source, stripe_customer_id (on connected account), no_show_count, last_visit_at; unique (salon_id, phone), (salon_id, email) partial where not null |
-| `bookings` | salon_id, client_id, staff_id, starts_at, ends_at, during tstzrange (generated), status (pending_payment/confirmed/cancelled/no_show/completed), source (online/dashboard/walk_in/app), reference (short human code, unique per salon), total_pence, deposit_pence, client_note, internal_note, hold_expires_at?, manage_token, cancelled_at, cancelled_by (client/salon/system), cancellation_reason, created_by?; **exclusion constraint** `(staff_id with =, during with &&) where status in ('pending_payment','confirmed')` |
+| `clients` | salon_id, user_id?, first_name, last_name, email, phone (E.164), notes (salon-private), marketing_opt_in, source, no_show_count, last_visit_at; unique (salon_id, phone), (salon_id, email) partial where not null |
+| `bookings` | salon_id, client_id, staff_id, starts_at, ends_at, during tstzrange (generated), status (pending_payment/confirmed/cancelled/no_show/completed), source (online/dashboard/walk_in/app), reference (short human code, unique per salon), total_pence, deposit_pence, client_note, internal_note, hold_expires_at?, deposit_paid_at?, buffer_after_min, cancelled_at, cancelled_by (client/salon/system), cancellation_reason, created_by?; **exclusion constraint** `(salon_id with =, staff_id with =, during with &&) where status in ('pending_payment','confirmed')` |
+| `booking_access` (server-only) | booking_id pk, manage_token. The secret in a client's manage link, created with every booking and never sent to the dashboard. |
+| `client_stripe` (server-only) | client_id pk, stripe_customer_id on the salon's connected account |
 | `booking_items` | booking_id, service_id, service_name (snapshot), duration_min, price_pence, starts_at, ends_at, sort_order (v1 one item; multi-service ready) |
 | `booking_events` | booking_id, salon_id, type (created/confirmed/rescheduled/cancelled/no_show/payment_succeeded…), actor, payload jsonb |
 
@@ -200,8 +214,8 @@ each salon has a `timezone`.
 |---|---|---|
 | Public visitor | One salon's public page and free slots, via functions | Nothing directly |
 | Staff | Own salon: diary, clients, services, team hours, message log | Bookings (dashboard and walk-in), blocked time, clients |
-| Manager | As staff, plus the team list | As staff, plus services, stylists, hours, branding, gallery, deleting clients |
-| Owner | As manager, plus payments, saved cards, subscription | As manager, plus salon details, booking and deposit rules, team membership |
+| Manager | As staff, plus the team list | As staff, plus services, stylists, hours, branding, gallery |
+| Owner | As manager, plus payments, saved cards, subscription | As manager, plus salon details, booking and deposit rules (including per-service deposits), team membership |
 
 Rules are covered by pgTAP tests in `supabase/tests/` (`scripts/test-db.sh` runs them against
 plain Postgres; `supabase test db` against the full local stack).

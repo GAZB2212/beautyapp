@@ -49,7 +49,8 @@ salon-app/
 ```
 
 Tooling: pnpm workspaces + Turborepo, TypeScript strict, Expo SDK (latest stable),
-Expo Router, NativeWind for styling (works on web + native), TanStack Query for data,
+Expo Router, a shared design system in `packages/ui` (theme tokens + primitives, see
+[DESIGN.md](DESIGN.md)), TanStack Query for data,
 EAS for native builds, Vercel (or Cloudflare Pages) for the two web exports.
 
 ### Why two apps rather than one
@@ -124,8 +125,8 @@ and failures. Templates are branded with the salon's name/logo/colour; sender is
 
 ## 6. Branding: fixed template, flexible content
 
-`salon_branding` holds everything the booking page needs: logo, cover photo, primary and
-accent colours, `font_style` (one of 3 curated pairings), `layout` (classic | editorial |
+`salon_branding` holds everything the booking page needs: logo, cover photo, a curated
+`palette` with optional custom accent, `font_style` (one of 3 curated pairings), `layout` (classic | editorial |
 minimal), tagline, about text, contact and social links, and gallery images (Storage bucket
 `salon-media`, path `<salon_id>/...`). `packages/ui` turns this into theme tokens; the three
 layouts are three components over the same data and the same booking flow.
@@ -148,7 +149,7 @@ each salon has a `timezone`.
 | `salon_settings` | salon_id pk, deposit_type (none/fixed/percent), deposit_value, cancellation_window_hours, no_show_fee_type, no_show_fee_value, slot_interval_min, min_notice_hours, max_advance_days, reminder_hours int[] (default {24,2}), allow_staff_choice, require_phone |
 | `salon_hours` | salon_id, weekday (0–6), opens_at, closes_at, is_closed |
 | `salon_members` | salon_id, user_id, role (owner/manager/staff), staff_id?, invited_email, accepted_at; unique (salon_id,user_id) |
-| `salon_branding` | salon_id pk, logo_path, cover_path, primary_color, accent_color, font_style, layout, tagline, about, instagram, facebook, tiktok, website, whatsapp, booking_message |
+| `salon_branding` | salon_id pk, logo_path, cover_path, palette (curated key), primary_color, accent_color, font_style, layout, tagline, about, instagram, facebook, tiktok, website, whatsapp, booking_message |
 | `salon_gallery_images` | salon_id, storage_path, caption, sort_order |
 | ★ `salon_domains` | salon_id, hostname (unique), verified_at |
 

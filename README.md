@@ -3,7 +3,8 @@
 White-label online booking for independent hair salons and stylists. A GAJO Creative product.
 Flat monthly fee, no marketplace, salons own their client relationships.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the plan and data model.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the plan and data model, and
+[docs/DESIGN.md](docs/DESIGN.md) for the design direction.
 
 ## Layout
 

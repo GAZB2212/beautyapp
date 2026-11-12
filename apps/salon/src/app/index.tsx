@@ -1,15 +1,23 @@
-import { Text, StyleSheet } from 'react-native';
-import { Screen, useTheme } from '@salon/ui';
+import { View } from 'react-native';
+import { Container, Divider, Text, useTheme } from '@salon/ui';
 
-/** Dashboard entry. Auth + onboarding wizard arrive in step 2, diary in step 6. */
+/** Dashboard entry. Sign-in and the onboarding wizard arrive in step 2, the diary in step 6. */
 export default function DashboardHome() {
-  const t = useTheme();
+  const { colors } = useTheme();
   return (
-    <Screen maxWidth={1100}>
-      <Text style={[styles.title, { color: t.text }]}>Salon App Dashboard</Text>
-      <Text style={{ color: t.muted }}>Sign in and onboarding coming next.</Text>
-    </Screen>
+    <View style={{ flex: 1, justifyContent: 'center', backgroundColor: colors.background }}>
+      <Container style={{ alignItems: 'center', gap: 14 }}>
+        <Text variant="label" tone="muted">
+          Dashboard
+        </Text>
+        <Text variant="display" center accessibilityRole="header">
+          Salon App
+        </Text>
+        <Divider short />
+        <Text center tone="muted">
+          Sign in and salon setup are coming next.
+        </Text>
+      </Container>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({ title: { fontSize: 28, fontWeight: '700', marginBottom: 8 } });

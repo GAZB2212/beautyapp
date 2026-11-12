@@ -225,7 +225,9 @@ plain Postgres; `supabase test db` against the full local stack).
 |---|---|---|
 | `get_storefront(slug)` | SQL function, security definer | One salon's public page as JSON: details, branding, booking rules, hours, services, stylists, gallery. Null unless the salon is live (members can preview their own). |
 | `get_availability(slug, service_id, from, days, staff_id?)` | SQL function, security definer | Free start times per stylist, from staff/salon hours, blocks, live bookings (with clean-down time), unexpired payment holds, notice and advance limits. Never exposes booking rows. |
-| `create-booking` | Edge Function | Validates, inserts pending booking, creates PaymentIntent on connected account, returns client secret or confirms. |
+| `book_appointment(...)` | SQL function, security definer, public | Books an appointment that needs no deposit: re-checks the slot with the availability rules, finds or creates the client (never altering an existing one), queues confirmation and reminders, with per-client and per-salon limits. Refuses with `deposit_required` when a deposit is due. |
+| `create_salon`, `slug_status`, `accept_invites`, `set_salon_published` | SQL functions, signed-in users | Salon sign-up, joining by invited (confirmed) email, and going live. |
+| `create-booking` | Edge Function (step 5) | For bookings with a deposit: inserts a pending booking with a hold, creates the PaymentIntent on the connected account, returns the client secret. |
 | `manage-booking` | Edge Function | Token-authenticated view / cancel / reschedule by client, applying the cancellation window. |
 | `stripe-webhook` | Edge Function | Connect + Billing events; idempotent via `stripe_events`. |
 | `stripe-connect` | Edge Function | Creates Express account, returns onboarding link, refreshes status. |
@@ -238,7 +240,7 @@ plain Postgres; `supabase test db` against the full local stack).
 |---|---|---|
 | 0 | Monorepo scaffold, both apps boot on web, CI (typecheck/lint/test), Supabase local project | — |
 | 1 | Migrations 0001–0002: tables, access rules, public page and availability functions, tests | **Yes (security rules)** — approved |
-| 2 | Salon signup → create salon → onboarding wizard (name, slug, hours, first stylist, first service) | **Yes (auth)** |
+| 2 | Salon signup → create salon → onboarding wizard (name, slug, hours, first stylist, first service) | **Yes (auth)** — approved and built; tested end to end against a local stand-in, pending the hosted project |
 | 3 | Dashboard settings: services, staff & hours, branding, gallery, deposit/cancellation rules | — |
 | 4 | Public booking page: branded storefront, 3 layouts, service → stylist → slot → details, guest booking without payment, QR code | — (storefront and booking flow UI built against sample data; live booking, other layouts and QR still to do) |
 | 5 | Stripe Connect onboarding + deposits + webhook + holds | **Yes (payments)** |

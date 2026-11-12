@@ -4,24 +4,33 @@ import { Check } from './icons';
 import { Text } from './Text';
 import { useTheme } from './theme';
 
-type FieldProps = TextInputProps & { label: string; error?: string; hint?: string; optional?: boolean };
+type FieldProps = TextInputProps & {
+  label: string;
+  /** Keep the label for screen readers but do not show it (e.g. inside a labelled row) */
+  hideLabel?: boolean;
+  error?: string;
+  hint?: string;
+  optional?: boolean;
+};
 
 /** Labelled text input with a quiet hairline border that darkens on focus. */
-export function TextField({ label, error, hint, optional, style, onFocus, onBlur, ...rest }: FieldProps) {
+export function TextField({ label, hideLabel, error, hint, optional, style, onFocus, onBlur, ...rest }: FieldProps) {
   const { colors, fonts, radius } = useTheme();
   const [focused, setFocused] = useState(false);
   return (
     <View style={{ gap: 6 }}>
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-        <Text variant="label" tone="muted">
-          {label}
-        </Text>
-        {optional ? (
-          <Text variant="small" style={{ fontSize: 12, lineHeight: 16 }}>
-            Optional
+      {hideLabel ? null : (
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+          <Text variant="label" tone="muted">
+            {label}
           </Text>
-        ) : null}
-      </View>
+          {optional ? (
+            <Text variant="small" style={{ fontSize: 12, lineHeight: 16 }}>
+              Optional
+            </Text>
+          ) : null}
+        </View>
+      )}
       <TextInput
         accessibilityLabel={label}
         placeholderTextColor={colors.muted}

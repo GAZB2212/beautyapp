@@ -3,8 +3,9 @@
 White-label online booking for independent hair salons and stylists. A GAJO Creative product.
 Flat monthly fee, no marketplace, salons own their client relationships.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the plan and data model, and
-[docs/DESIGN.md](docs/DESIGN.md) for the design direction.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the plan and data model,
+[docs/DESIGN.md](docs/DESIGN.md) for the design direction, and [docs/SETUP.md](docs/SETUP.md)
+for local development and hosted setup.
 
 ## Layout
 
@@ -17,7 +18,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the plan and data model, an
 | `packages/ui` | Shared components and brand theming. |
 | `packages/db` | Generated database types. |
 | `packages/config` | Shared tsconfig bases. |
-| `supabase/` | Migrations, seed data, Edge Functions, local config. |
+| `supabase/` | Migrations, seed data, database tests, local config. |
+| `tools/local-backend` | Development-only stand-in for the Supabase web API over plain Postgres. |
 
 ## Getting started
 

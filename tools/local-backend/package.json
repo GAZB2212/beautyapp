@@ -1,0 +1,9 @@
+{
+  "name": "@salon/local-backend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A small stand-in for the Supabase web API (auth + REST + RPC) backed by a plain local Postgres. For UI testing where Docker is not available. Never deploy this.",
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": { "pg": "^8.16.0" }
+}

@@ -1,4 +1,4 @@
-import { getAvailability, getStorefront, type AvailabilityQuery } from '@salon/api';
+import { bookAppointment, errorCode, getAvailability, getStorefront, type AvailabilityQuery } from '@salon/api';
 import type { AvailabilitySlot, ClientDetails, Storefront } from '@salon/core';
 import { env } from './env';
 import { sampleAvailability, sampleStorefront } from './sample';
@@ -35,10 +35,34 @@ export async function createBooking(req: BookingRequest): Promise<BookingResult>
     await new Promise((r) => setTimeout(r, 600));
     return { reference: 'PREVIEW', preview: true };
   }
-  // The server-side booking function arrives with the next step (it validates the slot,
-  // creates the client and booking, and takes the deposit where required).
-  void req;
-  throw new Error('Online booking is not switched on yet.');
+  const result = await bookAppointment(supabase(), req);
+  return { reference: result.reference, preview: false };
+}
+
+/** Words for the things that can go wrong when booking. */
+export function bookingErrorMessage(e: unknown): { message: string; pickAnotherTime?: boolean } {
+  switch (errorCode(e)) {
+    case 'slot_unavailable':
+      return { message: 'Sorry, that time has just been taken. Please choose another.', pickAnotherTime: true };
+    case 'too_many_bookings':
+      return { message: 'You already have several upcoming appointments. Please contact the salon to book another.' };
+    case 'try_later':
+      return { message: 'The salon’s diary is very busy right now. Please try again in a little while.' };
+    case 'deposit_required':
+      return { message: 'This appointment needs a deposit, and online payment isn’t available yet. Please contact the salon to book.' };
+    case 'salon_not_found':
+    case 'service_unavailable':
+      return { message: 'This appointment can no longer be booked online. Please go back and choose again.' };
+    case 'invalid_email':
+      return { message: 'Please check your email address.' };
+    case 'invalid_phone':
+    case 'phone_required':
+      return { message: 'Please check your mobile number.' };
+    case 'network':
+      return { message: 'We couldn’t reach the salon’s diary. Please check your connection and try again.' };
+    default:
+      return { message: 'Something went wrong on our side. Please try again.' };
+  }
 }
 
 /** Public URL for a file in the salon-media storage bucket. */

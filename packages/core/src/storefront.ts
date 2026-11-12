@@ -81,7 +81,20 @@ export const storefrontSchema = z.object({
 export type Storefront = z.infer<typeof storefrontSchema>;
 export type StorefrontService = Storefront['services'][number];
 
-export const availabilitySchema = z.array(z.object({ staff_id: z.guid(), starts_at: z.string() }));
+/** Start times are normalised to canonical UTC ("…Z") so they survive a trip through a URL. */
+export const availabilitySchema = z.array(
+  z.object({
+    staff_id: z.guid(),
+    starts_at: z.string().transform((v, ctx) => {
+      const t = Date.parse(v);
+      if (Number.isNaN(t)) {
+        ctx.addIssue({ code: 'custom', message: 'invalid start time' });
+        return z.NEVER;
+      }
+      return new Date(t).toISOString();
+    }),
+  }),
+);
 export type AvailabilitySlot = z.infer<typeof availabilitySchema>[number];
 
 /**

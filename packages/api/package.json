@@ -11,7 +11,8 @@
   "dependencies": {
     "@salon/core": "workspace:*",
     "@salon/db": "workspace:*",
-    "@supabase/supabase-js": "^2.119.0"
+    "@supabase/supabase-js": "^2.119.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@salon/config": "workspace:*",

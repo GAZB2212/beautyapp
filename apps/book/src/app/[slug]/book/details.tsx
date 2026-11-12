@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Redirect, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { View } from 'react-native';
@@ -7,7 +7,7 @@ import { Banner, Button, Checkbox, Text, TextField } from '@salon/ui';
 import { BookingShell } from '@/features/booking/BookingShell';
 import { Summary } from '@/features/booking/Summary';
 import { useBooking } from '@/features/booking/useBooking';
-import { createBooking } from '@/lib/data';
+import { bookingErrorMessage, createBooking } from '@/lib/data';
 
 const EMPTY: ClientDetailsInput = { firstName: '', lastName: '', email: '', phone: '', note: '', marketingOptIn: false };
 
@@ -25,8 +25,11 @@ export default function YourDetails() {
     if (errors[key]) setErrors((e) => ({ ...e, [key]: '' }));
   };
 
+  const queryClient = useQueryClient();
   const submit = useMutation({
     mutationFn: createBooking,
+    // Whatever happened, the diary has probably changed: fetch fresh times next time.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['availability'] }),
     onSuccess: (result) =>
       router.replace({
         pathname: '/[slug]/book/confirmed',
@@ -54,6 +57,7 @@ export default function YourDetails() {
     submit.mutate({ slug, serviceId: service.id, staffId: stylist.id, startsAt: start, client: parsed.data });
   };
 
+  const problem = submit.isError ? bookingErrorMessage(submit.error) : null;
   const cancelText =
     rules.cancellation_window_hours > 0
       ? `You can cancel or reschedule free of charge up to ${rules.cancellation_window_hours} hours before your appointment.`
@@ -152,11 +156,18 @@ export default function YourDetails() {
         ) : null}
       </View>
 
-      {submit.isError ? (
-        <View style={{ marginTop: 20 }}>
-          <Banner tone="error">
-            {submit.error instanceof Error ? submit.error.message : 'Something went wrong.'} Your booking has not been made.
-          </Banner>
+      {problem ? (
+        <View style={{ marginTop: 20, gap: 12 }}>
+          <Banner tone="error">{problem.message} Your booking has not been made.</Banner>
+          {problem.pickAnotherTime ? (
+            <Button
+              title="Choose another time"
+              variant="outline"
+              onPress={() =>
+                router.replace({ pathname: '/[slug]/book/time', params: { slug, service: service.id, staff: anyStylist ? 'any' : stylist.id } })
+              }
+            />
+          ) : null}
         </View>
       ) : null}
     </BookingShell>

@@ -1,10 +1,11 @@
 import { availabilitySchema, storefrontSchema, type AvailabilitySlot, type Storefront } from '@salon/core';
 import type { TypedSupabaseClient } from './client';
+import { toApiError } from './errors';
 
 /** Load a salon's public page. Returns null when the salon does not exist or is not live. */
 export async function getStorefront(client: TypedSupabaseClient, slug: string): Promise<Storefront | null> {
   const { data, error } = await client.rpc('get_storefront', { p_slug: slug });
-  if (error) throw error;
+  if (error) throw toApiError(error);
   if (data == null) return null;
   return storefrontSchema.parse(data);
 }
@@ -29,6 +30,6 @@ export async function getAvailability(client: TypedSupabaseClient, q: Availabili
     p_days: q.days ?? 14,
     p_staff_id: q.staffId ?? null,
   });
-  if (error) throw error;
+  if (error) throw toApiError(error);
   return availabilitySchema.parse(data ?? []);
 }

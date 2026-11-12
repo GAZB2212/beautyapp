@@ -111,11 +111,12 @@ end $$;
 create trigger guard_service_deposit before insert or update on public.services
   for each row execute function app.guard_service_deposit();
 
--- What a signed-in team member may do to a booking's state. (Server code is not restricted.)
+-- What a signed-in team member may do to a booking's state when editing it directly.
+-- Server-side functions run as their owner, not as "authenticated", so they are not restricted.
 create or replace function app.guard_booking_update()
 returns trigger language plpgsql set search_path = '' as $$
 begin
-  if (select auth.uid()) is null then
+  if current_user <> 'authenticated' then
     return new;
   end if;
   if old.status = 'pending_payment' then

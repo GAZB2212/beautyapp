@@ -120,13 +120,14 @@ select is(
 select set_eq(
   $$ select p.proname::text from pg_proc p
      where p.pronamespace = 'public'::regnamespace and has_function_privilege('anon', p.oid, 'execute') $$,
-  array['get_storefront', 'get_availability'],
-  'the public can call exactly two functions');
+  array['get_storefront', 'get_availability', 'book_appointment'],
+  'the public can call exactly three functions');
 select set_eq(
   $$ select p.proname::text from pg_proc p
      where p.pronamespace = 'public'::regnamespace and has_function_privilege('authenticated', p.oid, 'execute') $$,
-  array['get_storefront', 'get_availability'],
-  'signed-in users can call exactly the same two functions');
+  array['get_storefront', 'get_availability', 'book_appointment',
+        'create_salon', 'slug_status', 'accept_invites', 'set_salon_published'],
+  'signed-in users can additionally call only the sign-up, invite and publish functions');
 
 -- Anything added later starts closed
 create function public.future_function() returns int language sql security definer as 'select 1';

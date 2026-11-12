@@ -33,7 +33,7 @@ export function SalonProvider({ slug, overrides, children }: PropsWithChildren<{
   const fontStyle: FontStyle = FONT_STYLES.includes(overrides?.font as FontStyle)
     ? (overrides!.font as FontStyle)
     : (branding?.font_style ?? 'classic');
-  const brand = { palette: overrides?.palette ?? branding?.palette, fontStyle };
+  const brand = { palette: overrides?.palette ?? branding?.palette, accent: branding?.accent_color, fontStyle };
   const [fontsLoaded] = useFonts(fontAssets(fontStyle));
   const background = buildTheme(brand).colors.background;
 

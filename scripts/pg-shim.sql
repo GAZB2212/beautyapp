@@ -10,7 +10,7 @@ create schema if not exists extensions;
 grant usage on schema extensions to anon, authenticated, service_role;
 do $$ begin execute format('alter database %I set search_path = "$user", public, extensions', current_database()); end $$;
 set search_path = "$user", public, extensions;
-create table if not exists auth.users (id uuid primary key default gen_random_uuid(), email text);
+create table if not exists auth.users (id uuid primary key default gen_random_uuid(), email text, email_confirmed_at timestamptz default now());
 create or replace function auth.uid() returns uuid language sql stable as $$
   select coalesce(
     nullif(current_setting('request.jwt.claim.sub', true), ''),

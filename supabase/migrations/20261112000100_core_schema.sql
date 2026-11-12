@@ -147,9 +147,9 @@ create table public.salon_branding (
   salon_id        uuid primary key references public.salons(id) on delete cascade,
   logo_path       text,
   cover_path      text,
-  primary_color   text not null default '#1F1F1F' check (primary_color ~ '^#[0-9A-Fa-f]{6}$'),
-  accent_color    text not null default '#C9A27E' check (accent_color ~ '^#[0-9A-Fa-f]{6}$'),
-  font_style      public.font_style not null default 'modern',
+  primary_color   text check (primary_color ~ '^#[0-9A-Fa-f]{6}$'),   -- optional custom colours; null = use the palette's
+  accent_color    text check (accent_color ~ '^#[0-9A-Fa-f]{6}$'),
+  font_style      public.font_style not null default 'classic',
   layout          public.layout_style not null default 'classic',
   palette         text not null default 'champagne' check (length(palette) <= 30),   -- curated palette key, or 'custom'
   tagline         text check (length(tagline) <= 120),

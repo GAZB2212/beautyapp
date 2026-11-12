@@ -1,8 +1,11 @@
 -- 0001 core schema: tenancy, catalogue, clients, bookings, money, messaging.
--- Every tenant-owned table carries salon_id. RLS is enabled on every table (see 0002).
+-- Every tenant-owned table carries salon_id, and child rows reference their parents with
+-- composite (salon_id, id) foreign keys, so a row can never point at another salon's data.
+-- RLS is enabled on every table here; the access rules live in the next migration.
 
-create extension if not exists pgcrypto;
-create extension if not exists btree_gist;   -- uuid = in exclusion constraints
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
+create extension if not exists btree_gist with schema extensions;   -- uuid = in exclusion constraints
 
 -- Private helper schema. Not exposed through the API (see supabase/config.toml [api] schemas).
 create schema if not exists app;
@@ -31,7 +34,7 @@ create type public.subscription_status as enum ('trialing', 'active', 'past_due'
 -- Generic helpers
 -- ---------------------------------------------------------------------------
 create or replace function app.set_updated_at()
-returns trigger language plpgsql as $$
+returns trigger language plpgsql set search_path = '' as $$
 begin
   new.updated_at = now();
   return new;
@@ -166,7 +169,8 @@ create table public.staff (
   active      boolean not null default true,
   sort_order  integer not null default 0,
   created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now()
+  updated_at  timestamptz not null default now(),
+  unique (salon_id, id)
 );
 create index staff_salon_idx on public.staff(salon_id, sort_order);
 create trigger staff_updated_at before update on public.staff for each row execute function app.set_updated_at();
@@ -174,10 +178,11 @@ create trigger staff_updated_at before update on public.staff for each row execu
 create table public.staff_hours (
   id        uuid primary key default gen_random_uuid(),
   salon_id  uuid not null references public.salons(id) on delete cascade,
-  staff_id  uuid not null references public.staff(id) on delete cascade,
+  staff_id  uuid not null,
   weekday   smallint not null check (weekday between 0 and 6),
   starts_at time not null,
   ends_at   time not null,
+  foreign key (salon_id, staff_id) references public.staff(salon_id, id) on delete cascade,
   check (ends_at > starts_at),
   unique (staff_id, weekday, starts_at)
 );
@@ -186,14 +191,15 @@ create table public.service_categories (
   id         uuid primary key default gen_random_uuid(),
   salon_id   uuid not null references public.salons(id) on delete cascade,
   name       text not null check (length(name) between 1 and 60),
-  sort_order integer not null default 0
+  sort_order integer not null default 0,
+  unique (salon_id, id)
 );
 create index service_categories_salon_idx on public.service_categories(salon_id, sort_order);
 
 create table public.services (
   id                    uuid primary key default gen_random_uuid(),
   salon_id              uuid not null references public.salons(id) on delete cascade,
-  category_id           uuid references public.service_categories(id) on delete set null,
+  category_id           uuid,
   name                  text not null check (length(name) between 1 and 80),
   description           text check (length(description) <= 600),
   duration_min          integer not null check (duration_min between 5 and 600),
@@ -206,30 +212,35 @@ create table public.services (
   active                boolean not null default true,
   sort_order            integer not null default 0,
   created_at            timestamptz not null default now(),
-  updated_at            timestamptz not null default now()
+  updated_at            timestamptz not null default now(),
+  unique (salon_id, id),
+  foreign key (salon_id, category_id) references public.service_categories(salon_id, id) on delete set null (category_id)
 );
 create index services_salon_idx on public.services(salon_id, sort_order);
 create trigger services_updated_at before update on public.services for each row execute function app.set_updated_at();
 
 create table public.staff_services (
   salon_id              uuid not null references public.salons(id) on delete cascade,
-  staff_id              uuid not null references public.staff(id) on delete cascade,
-  service_id            uuid not null references public.services(id) on delete cascade,
+  staff_id              uuid not null,
+  service_id            uuid not null,
   price_override_pence  integer check (price_override_pence >= 0),
   duration_override_min integer check (duration_override_min between 5 and 600),
-  primary key (staff_id, service_id)
+  primary key (staff_id, service_id),
+  foreign key (salon_id, staff_id) references public.staff(salon_id, id) on delete cascade,
+  foreign key (salon_id, service_id) references public.services(salon_id, id) on delete cascade
 );
 
 create table public.blocks (
   id         uuid primary key default gen_random_uuid(),
   salon_id   uuid not null references public.salons(id) on delete cascade,
-  staff_id   uuid references public.staff(id) on delete cascade,   -- null = whole salon
+  staff_id   uuid,                                                -- null = whole salon
   starts_at  timestamptz not null,
   ends_at    timestamptz not null,
   kind       public.block_kind not null default 'block',
   reason     text check (length(reason) <= 200),
-  created_by uuid references auth.users(id) on delete set null,
+  created_by uuid default auth.uid() references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
+  foreign key (salon_id, staff_id) references public.staff(salon_id, id) on delete cascade,
   check (ends_at > starts_at)
 );
 create index blocks_salon_time_idx on public.blocks(salon_id, starts_at);
@@ -253,6 +264,7 @@ create table public.clients (
   last_visit_at      timestamptz,
   created_at         timestamptz not null default now(),
   updated_at         timestamptz not null default now(),
+  unique (salon_id, id),
   check (email is not null or phone is not null)
 );
 create unique index clients_salon_phone_key on public.clients(salon_id, phone) where phone is not null;
@@ -263,16 +275,18 @@ create trigger clients_updated_at before update on public.clients for each row e
 create table public.bookings (
   id                  uuid primary key default gen_random_uuid(),
   salon_id            uuid not null references public.salons(id) on delete cascade,
-  client_id           uuid references public.clients(id) on delete set null,
-  staff_id            uuid not null references public.staff(id) on delete restrict,
+  client_id           uuid,
+  staff_id            uuid not null,
   starts_at           timestamptz not null,
-  ends_at             timestamptz not null,
+  ends_at             timestamptz not null,                -- end of the appointment itself
+  buffer_after_min    integer not null default 0 check (buffer_after_min between 0 and 120),   -- clean-down time, snapshot from the service
   during              tstzrange generated always as (tstzrange(starts_at, ends_at, '[)')) stored,
   status              public.booking_status not null default 'confirmed',
   source              public.booking_source not null default 'online',
   reference           text not null default upper(encode(gen_random_bytes(3), 'hex')),
   total_pence         integer not null default 0 check (total_pence >= 0),
   deposit_pence       integer not null default 0 check (deposit_pence >= 0),
+  deposit_paid_at     timestamptz,                 -- staff can see that a deposit was paid without seeing payment records
   client_note         text check (length(client_note) <= 500),
   internal_note       text,
   hold_expires_at     timestamptz,                 -- set while pending_payment
@@ -280,9 +294,12 @@ create table public.bookings (
   cancelled_at        timestamptz,
   cancelled_by        public.cancelled_by,
   cancellation_reason text,
-  created_by          uuid references auth.users(id) on delete set null,
+  created_by          uuid default auth.uid() references auth.users(id) on delete set null,
   created_at          timestamptz not null default now(),
   updated_at          timestamptz not null default now(),
+  unique (salon_id, id),
+  foreign key (salon_id, client_id) references public.clients(salon_id, id) on delete set null (client_id),
+  foreign key (salon_id, staff_id) references public.staff(salon_id, id) on delete restrict,
   unique (salon_id, reference),
   unique (manage_token),
   check (ends_at > starts_at),
@@ -291,31 +308,35 @@ create table public.bookings (
 );
 create index bookings_salon_time_idx on public.bookings(salon_id, starts_at);
 create index bookings_client_idx on public.bookings(client_id);
+create index bookings_staff_time_idx on public.bookings(staff_id, starts_at) where status in ('pending_payment', 'confirmed');
 create index bookings_hold_idx on public.bookings(hold_expires_at) where status = 'pending_payment';
 create trigger bookings_updated_at before update on public.bookings for each row execute function app.set_updated_at();
 
 create table public.booking_items (
   id           uuid primary key default gen_random_uuid(),
-  booking_id   uuid not null references public.bookings(id) on delete cascade,
+  booking_id   uuid not null,
   salon_id     uuid not null references public.salons(id) on delete cascade,
-  service_id   uuid references public.services(id) on delete set null,
+  service_id   uuid,
   service_name text not null,                       -- snapshot at time of booking
   duration_min integer not null check (duration_min > 0),
   price_pence  integer not null check (price_pence >= 0),
   starts_at    timestamptz not null,
   ends_at      timestamptz not null,
-  sort_order   integer not null default 0
+  sort_order   integer not null default 0,
+  foreign key (salon_id, booking_id) references public.bookings(salon_id, id) on delete cascade,
+  foreign key (salon_id, service_id) references public.services(salon_id, id) on delete set null (service_id)
 );
 create index booking_items_booking_idx on public.booking_items(booking_id);
 
 create table public.booking_events (
   id         bigint generated always as identity primary key,
-  booking_id uuid not null references public.bookings(id) on delete cascade,
+  booking_id uuid not null,
   salon_id   uuid not null references public.salons(id) on delete cascade,
   type       text not null,
   actor      text,                                   -- 'client' | 'system' | user uuid
   payload    jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  foreign key (salon_id, booking_id) references public.bookings(salon_id, id) on delete cascade
 );
 create index booking_events_booking_idx on public.booking_events(booking_id, created_at);
 
@@ -325,8 +346,8 @@ create index booking_events_booking_idx on public.booking_events(booking_id, cre
 create table public.payments (
   id                       uuid primary key default gen_random_uuid(),
   salon_id                 uuid not null references public.salons(id) on delete cascade,
-  booking_id               uuid references public.bookings(id) on delete set null,
-  client_id                uuid references public.clients(id) on delete set null,
+  booking_id               uuid,
+  client_id                uuid,
   kind                     public.payment_kind not null,
   amount_pence             integer not null check (amount_pence >= 0),
   currency                 char(3) not null default 'GBP',
@@ -336,7 +357,9 @@ create table public.payments (
   stripe_refund_id         text,
   failure_reason           text,
   created_at               timestamptz not null default now(),
-  updated_at               timestamptz not null default now()
+  updated_at               timestamptz not null default now(),
+  foreign key (salon_id, booking_id) references public.bookings(salon_id, id) on delete set null (booking_id),
+  foreign key (salon_id, client_id) references public.clients(salon_id, id) on delete set null (client_id)
 );
 create index payments_booking_idx on public.payments(booking_id);
 create trigger payments_updated_at before update on public.payments for each row execute function app.set_updated_at();
@@ -344,7 +367,7 @@ create trigger payments_updated_at before update on public.payments for each row
 create table public.client_payment_methods (
   id                       uuid primary key default gen_random_uuid(),
   salon_id                 uuid not null references public.salons(id) on delete cascade,
-  client_id                uuid not null references public.clients(id) on delete cascade,
+  client_id                uuid not null,
   stripe_payment_method_id text not null unique,
   brand                    text,
   last4                    text,
@@ -352,7 +375,8 @@ create table public.client_payment_methods (
   exp_year                 smallint,
   consent_text             text not null,
   consent_at               timestamptz not null default now(),
-  created_at               timestamptz not null default now()
+  created_at               timestamptz not null default now(),
+  foreign key (salon_id, client_id) references public.clients(salon_id, id) on delete cascade
 );
 create index client_payment_methods_client_idx on public.client_payment_methods(client_id);
 
@@ -384,8 +408,8 @@ create table public.stripe_events (
 create table public.notifications (
   id                  uuid primary key default gen_random_uuid(),
   salon_id            uuid not null references public.salons(id) on delete cascade,
-  booking_id          uuid references public.bookings(id) on delete cascade,
-  client_id           uuid references public.clients(id) on delete cascade,
+  booking_id          uuid,
+  client_id           uuid,
   user_id             uuid references auth.users(id) on delete cascade,   -- staff push targets
   channel             public.notification_channel not null,
   template            text not null,
@@ -396,7 +420,9 @@ create table public.notifications (
   provider_message_id text,
   error               text,
   payload             jsonb not null default '{}'::jsonb,
-  created_at          timestamptz not null default now()
+  created_at          timestamptz not null default now(),
+  foreign key (salon_id, booking_id) references public.bookings(salon_id, id) on delete cascade,
+  foreign key (salon_id, client_id) references public.clients(salon_id, id) on delete cascade
 );
 create index notifications_due_idx on public.notifications(scheduled_for) where status = 'queued';
 create index notifications_booking_idx on public.notifications(booking_id);

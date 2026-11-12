@@ -78,11 +78,18 @@ wrapped in a thin Next.js shell without changing the data layer.
   `manage_token` link to view/cancel/reschedule. No client data is readable with the anon key.
 - **Clients (app, phase 2)**: Supabase Auth (phone OTP, Apple, Google). Their `auth.users.id`
   is linked onto `clients.user_id` by verified phone/email, so history carries over.
-- **Public reads** (anon key): only through views that expose safe columns:
-  `public_salons`, `public_services`, `public_staff`, `public_gallery`, filtered to
-  active salons and bookable items. Stripe IDs, settings and client data never leave the DB.
+- **Public reads** (anon key): the anon role has no access to any table. The booking page
+  reads through two functions only: `get_storefront(slug)` returns one salon's public page as
+  a single JSON document (safe fields only), and `get_availability(...)` returns free start
+  times. Stripe IDs, internal settings and client data never leave the database.
 - **Writes from the public page** go through Edge Functions using the service role, which
   validate and apply rules server-side. The anon key cannot insert bookings directly.
+- **Three layers per tenant rule**: explicit grants (column-level for writes, so fields like
+  deposits, Stripe IDs and salon status are not writable from the API), RLS policies keyed on
+  `app.salon_ids(min_role)`, and composite `(salon_id, id)` foreign keys plus triggers so a row
+  can never reference or move to another salon.
+- **New tables are closed by default**: default API privileges are revoked, so every future
+  table needs explicit grants and policies in its migration.
 - **Double-booking prevention** is in the database: an exclusion constraint on
   `bookings (staff_id, during)` for live statuses, so two requests for the same slot cannot
   both succeed regardless of application code.
@@ -187,15 +194,23 @@ each salon has a `timezone`.
 | ★ `client_salons` | user_id, salon_id, first_seen_at, last_seen_at, is_default (the "remembered salon" in the client app) |
 | ★ `loyalty_programs` / `loyalty_ledger` | designed later; `clients` and `bookings` already carry what a points ledger needs |
 
-### Views exposed to the anon key
-`public_salons` (slug, name, address, phone, timezone, branding, hours, settings needed for the
-flow such as deposit rules and cancellation window), `public_services`, `public_staff`,
-`public_gallery`. Everything else is members-only or server-only.
+### Roles
+
+| Role | Reads | Writes |
+|---|---|---|
+| Public visitor | One salon's public page and free slots, via functions | Nothing directly |
+| Staff | Own salon: diary, clients, services, team hours, message log | Bookings (dashboard and walk-in), blocked time, clients |
+| Manager | As staff, plus the team list | As staff, plus services, stylists, hours, branding, gallery, deleting clients |
+| Owner | As manager, plus payments, saved cards, subscription | As manager, plus salon details, booking and deposit rules, team membership |
+
+Rules are covered by pgTAP tests in `supabase/tests/` (`scripts/test-db.sh` runs them against
+plain Postgres; `supabase test db` against the full local stack).
 
 ### RPCs / Edge Functions
 | Name | Where | Purpose |
 |---|---|---|
-| `get_availability(salon_slug, service_id, staff_id?, from, to)` | SQL function, security definer | Returns free slots; computed from staff_hours, salon_hours, blocks, bookings, service duration + buffer, settings. Never exposes booking rows. |
+| `get_storefront(slug)` | SQL function, security definer | One salon's public page as JSON: details, branding, booking rules, hours, services, stylists, gallery. Null unless the salon is live (members can preview their own). |
+| `get_availability(slug, service_id, from, days, staff_id?)` | SQL function, security definer | Free start times per stylist, from staff/salon hours, blocks, live bookings (with clean-down time), unexpired payment holds, notice and advance limits. Never exposes booking rows. |
 | `create-booking` | Edge Function | Validates, inserts pending booking, creates PaymentIntent on connected account, returns client secret or confirms. |
 | `manage-booking` | Edge Function | Token-authenticated view / cancel / reschedule by client, applying the cancellation window. |
 | `stripe-webhook` | Edge Function | Connect + Billing events; idempotent via `stripe_events`. |
@@ -208,7 +223,7 @@ flow such as deposit rules and cancellation window), `public_services`, `public_
 | Step | Deliverable | Check-in with you first? |
 |---|---|---|
 | 0 | Monorepo scaffold, both apps boot on web, CI (typecheck/lint/test), Supabase local project | — |
-| 1 | Migration 0001: tenancy tables, RLS policies, public views, availability function, tests | **Yes (security rules)** |
+| 1 | Migrations 0001–0002: tables, access rules, public page and availability functions, tests | **Yes (security rules)** — approved |
 | 2 | Salon signup → create salon → onboarding wizard (name, slug, hours, first stylist, first service) | **Yes (auth)** |
 | 3 | Dashboard settings: services, staff & hours, branding, gallery, deposit/cancellation rules | — |
 | 4 | Public booking page: branded storefront, 3 layouts, service → stylist → slot → details, guest booking without payment, QR code | — |

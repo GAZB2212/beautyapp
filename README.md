@@ -30,3 +30,6 @@ pnpm web:salon         # dashboard
 ```
 
 Checks: `pnpm typecheck`, `pnpm lint`, `pnpm test`. Web builds: `pnpm --filter @salon/book build`.
+
+Database access rules are tested with pgTAP: `supabase test db` (with the local stack running),
+or `scripts/test-db.sh` against any plain Postgres 15+ that has pgTAP installed.
